@@ -1,0 +1,373 @@
+Description: This cloudformation template creates a high-availability web app (Udagram)
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name to attach to resource
+    Type: String
+  
+  InstanceType:
+    Description: Instance type for EC2
+    Type: String
+
+  VpcCidr:
+    Description: CIDR for VPC
+    Type: String
+
+  PublicSubnet1CIDR:
+    Description: CIDR for Subnet
+    Type: String
+
+  PublicSubnet2CIDR:
+    Description: CIDR for Subnet
+    Type: String
+  
+  PrivateSubnet1CIDR:
+    Description: CIDR for Subnet
+    Type: String
+  
+  PrivateSubnet2CIDR:
+    Description: CIDR for Subnet
+    Type: String
+
+
+Resources:
+  
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  InternetGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+  
+  InternetGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref InternetGW
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      VpcId: !Ref myVPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      VpcId: !Ref myVPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      VpcId: !Ref myVPC
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      VpcId: !Ref myVPC
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  NatGW1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGWAttachment
+    Properties:
+      Domain: vpc
+
+  NatGW2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGWAttachment
+    Properties:
+      Domain: vpc
+
+  
+  NatGW1: 
+      Type: AWS::EC2::NatGateway
+      Properties: 
+          AllocationId: !GetAtt NatGW1EIP.AllocationId
+          SubnetId: !Ref PublicSubnet1
+
+  NatGW2: 
+      Type: AWS::EC2::NatGateway
+      Properties:
+          AllocationId: !GetAtt NatGW2EIP.AllocationId
+          SubnetId: !Ref PublicSubnet2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGW
+
+  PublicSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+  
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: name
+          Value: !Ref EnvironmentName
+
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGW1
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGW2
+
+  PrivateSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  S3ReadOnlyEC2:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-Role
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Path: "/"
+
+  S3ReadOnlyPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: S3ReadOnlyAccess
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action: 
+            - s3:Get*
+            - s3:List*
+          Resource: 
+          - arn:aws:s3:::udacity-proj-2
+          - arn:aws:s3:::udacity-proj-2/*
+      Roles:
+        - !Ref S3ReadOnlyEC2   
+
+  iamInstanceProfileApp:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: S3ReadOnlyEC2
+
+  LBSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Control traffic for Load balancer 
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      
+  ServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ssh for Load balancer 
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        CidrIp: 0.0.0.0/0
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile: !Ref iamInstanceProfileApp
+      ImageId: ami-0cff7528ff583bf9a
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - Ref: ServerSecGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          apt-get update -y
+          apt-get install unzip awscli -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          aws s3 cp s3://udacity-proj-2/udagram.zip .
+          unzip -o udacity.zip
+      BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: 10
+
+  
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref myVPC
+
+  ScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:  
+      - !Ref PrivateSubnet1
+      - !Ref PrivateSubnet2 
+      LaunchConfigurationName:
+        Ref: LaunchConfig
+      MinSize: '4'
+      MaxSize: '6'
+      TargetGroupARNs:
+      - Ref: AppTargetGroup
+
+  AppLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      SecurityGroups:
+      - Ref: LBSecGroup
+      Subnets:
+      - !Ref PublicSubnet1
+      - !Ref PublicSubnet2
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      -   Type: forward
+          TargetGroupArn:
+            Ref: AppTargetGroup
+      LoadBalancerArn:
+        Ref: AppLB
+      Port: 80
+      Protocol: HTTP
+
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref AppTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref 'Listener'
+      Priority: 1
+
+Outputs: 
+  VPC:
+    Description: VPC
+    Value: !Ref myVPC
+  # This is also optional.
+  # Bonus points for useful outputs!
+  # for example, if you create a Load Balancer
+  # it's nice to output the URL to it here, so that we don't have to go to the console to get it.
+
+# Sample UserData
+# When creating your Launch Configuration, you may need a UserData script
+# here's one that you can use for Ubuntu Linux that will:
+# Install Apache Web Server, Start it, and create an index.html that will be displayed
+# when you visit the IP address of this server with your web browser
+#Here it is:
+#
+#          #!/bin/bash
+#          apt-get update -y
+#          apt-get install apache2 -y
+#          systemctl start apache2.service
+#          cd /var/www/html
+#          echo "Udacity Demo Web Server Up and Running!" > index.html
